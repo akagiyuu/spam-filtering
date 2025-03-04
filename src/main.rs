@@ -1,13 +1,15 @@
 use rand::seq::SliceRandom;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    path::Path,
 };
 use stop_words::LANGUAGE;
 
 const THRESHOLD: f64 = 0.5;
 
+#[derive(Serialize, Deserialize)]
 pub struct Tokenizer {
     tokenizer: tokenizers::Tokenizer,
     stopwords: HashSet<String>,
@@ -30,8 +32,8 @@ impl Tokenizer {
 
         encoding
             .get_tokens()
-            .into_iter()
-            .zip(encoding.get_ids().into_iter())
+            .iter()
+            .zip(encoding.get_ids())
             .filter_map(|(token, &id)| {
                 if self.stopwords.contains(token) || token.chars().any(|c| !c.is_alphanumeric()) {
                     None
@@ -55,11 +57,13 @@ impl Email {
     }
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct EmailClassifier {
     pub p_spam: f64,
     pub p_word: HashMap<u32, f64>,
     pub p_word_given_spam: HashMap<u32, f64>,
     pub length: f64,
+    #[serde(skip)]
     pub tokenizer: Tokenizer,
     pub s: f64,
 }
@@ -96,6 +100,15 @@ impl From<&[Email]> for EmailClassifier {
 }
 
 impl EmailClassifier {
+    pub fn load(path: impl AsRef<Path>) -> Self {
+        let raw = fs::read(path).unwrap();
+        bincode::deserialize(&raw).unwrap()
+    }
+    pub fn save(&self, path: impl AsRef<Path>) {
+        let raw = bincode::serialize(self).unwrap();
+        fs::write(path, raw).unwrap();
+    }
+
     pub fn _prob(&self, token: u32) -> f64 {
         let n = self.p_word.get(&token).copied().unwrap_or(0.) * self.length;
 
@@ -133,8 +146,13 @@ fn main() {
 
     let classifier = EmailClassifier::from(train);
 
+    classifier.save("model");
+
     let test_length = test.len();
-    let correct_count = test.into_iter().map(|email| classifier.is_spam(&email.content) == email.is_spam()).count();
+    let correct_count = test
+        .iter()
+        .filter(|email| classifier.is_spam(&email.content) == email.is_spam())
+        .count();
 
     println!("Accuracy: {}", correct_count as f64 / test_length as f64);
 }
