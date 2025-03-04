@@ -1,5 +1,9 @@
+use rand::seq::SliceRandom;
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+};
 use stop_words::LANGUAGE;
 
 const THRESHOLD: f64 = 0.5;
@@ -60,18 +64,18 @@ pub struct EmailClassifier {
     pub s: f64,
 }
 
-impl From<Vec<Email>> for EmailClassifier {
-    fn from(emails: Vec<Email>) -> Self {
-        let length = emails.len();
+impl From<&[Email]> for EmailClassifier {
+    fn from(emails: &[Email]) -> Self {
+        let length = emails.len() as f64;
 
-        let p_spam = emails.iter().filter(|email| email.is_spam()).count();
+        let p_spam = emails.iter().filter(|email| email.is_spam()).count() as f64 / length;
 
         let mut p_word = HashMap::new();
         let mut p_word_given_spam = HashMap::new();
 
         let tokenizer = Tokenizer::default();
 
-        for email in &emails {
+        for email in emails {
             for token in tokenizer.encode(&email.content) {
                 *p_word.entry(token).or_default() += 1.;
                 if email.is_spam() {
@@ -116,4 +120,21 @@ impl EmailClassifier {
 }
 
 fn main() {
+    let data = fs::OpenOptions::new().read(true).open("data.csv").unwrap();
+    let mut reader = csv::Reader::from_reader(data);
+
+    let mut data = reader
+        .deserialize::<Email>()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    data.shuffle(&mut rand::rng());
+
+    let (train, test) = data.split_at(data.len() * 8 / 10);
+
+    let classifier = EmailClassifier::from(train);
+
+    let test_length = test.len();
+    let correct_count = test.into_iter().map(|email| classifier.is_spam(&email.content) == email.is_spam()).count();
+
+    println!("Accuracy: {}", correct_count as f64 / test_length as f64);
 }
